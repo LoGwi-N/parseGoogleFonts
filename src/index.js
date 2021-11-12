@@ -39,7 +39,7 @@ function clearFontCssFile(filename) {
 async function download(url, dest) {
   const file = fs.createWriteStream(dest);
 
-  return  new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     request({
       uri: url,
       gzip: true,
@@ -66,6 +66,20 @@ function getFileData(url) {
   }
 }
 
+const formatWoff = {
+  type: 'Function',
+  loc: null,
+  name: 'format',
+  children: [{type: 'String', loc: null, value: "'woff'"}]
+}
+
+function getNewUrl(urlObject, url) {
+  urlObject.value.value = url
+  return urlObject
+}
+
+const arrayToDownLoad = []
+
 async function parseCss(css) {
   const ast = csstree.parse(css, {
     parseAtrulePrelude: false,
@@ -76,15 +90,14 @@ async function parseCss(css) {
 
   await csstree.walk(astPlained, {
     visit: 'Declaration',
-    async enter(node) {
+    enter(node) {
 
       if (node.property === 'src') {
 
         const urlObject = node.value.children.find(el => el.type === 'Url') ?? null
-        const formatObject = {...node.value.children.find(el => el.type === 'Function')}
+        // const formatObject = {...node.value.children.find(el => el.type === 'Function')}
 
-
-        console.log(formatObject)
+        // console.log(formatObject)
 
         // console.log(urlObject)
 
@@ -94,20 +107,20 @@ async function parseCss(css) {
           const {name, ext} = getFileData(urlObject.value?.value)
 
           const destPath = path.resolve(fontsDir, `${name}.${ext}`)
-          download(fontUrl, destPath).then(r => {
 
-          })
+          arrayToDownLoad.push({ fontUrl, destPath })
 
           urlObject.value.value = '../assets/fonts/Roboto/' + `${name}.${ext}`
-        }
 
-        node.value.children = [
-          ...node.value.children,
-          { type: 'Operator', loc: null, value: ',' },
-          urlObject,
-          { type: 'WhiteSpace', loc: null, value: ' ' },
-          formatObject
-        ]
+          node.value.children = [
+            ...node.value.children,
+            {type: 'Operator', loc: null, value: ','},
+            getNewUrl({...urlObject}, '../assets/fonts/Roboto/' + `${name}.${ext}`),
+            {type: 'WhiteSpace', loc: null, value: ' '},
+            formatWoff
+          ]
+
+        }
 
       }
     }
@@ -129,9 +142,11 @@ request(
 
       const cssResult = await parseCss(body)
 
+      arrayToDownLoad.forEach(download)
+
       // fs.writeFileSync(path.resolve(__dirname, '../', 'dist', 'fonts.css'), cssResult);
 
-      fs.writeFile(fontsCssFile, cssResult, { flag: 'wx' }, function (err) {
+      fs.writeFile(fontsCssFile, cssResult, {flag: 'wx'}, function (err) {
         if (err) {
           console.log(err)
         }
