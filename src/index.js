@@ -1,167 +1,37 @@
-const request = require('request');
-import * as csstree from 'css-tree';
+import {clearDir, createCss, download, getBodyFromUrl, modifyAST} from "./common/functions";
+import dotenv from "dotenv";
 
 const fs = require('fs');
 const path = require('path');
 
-const userAgentWoff2 = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.54 Safari/537.36'
-// const userAgentWoff = 'Mozilla/5.0 (iPad; CPU OS 6_0 like Mac OS X) AppleWebKit/536.26 (KHTML, like Gecko) Version/6.0 Mobile/10A5355d Safari/8536.25'
+const result = dotenv.config()
 
-const URL_PARSE = 'http://fonts.googleapis.com/css2?family=Roboto:wght@100;300;400;500;700&display=swap'
-
-// const URL_PARSE = path.resolve(__dirname, '../', 'input', 'input.css')
-const fontsDir = path.resolve(__dirname, '../', 'dist', 'fonts')
-const fontsCssFile = path.resolve(__dirname, '../', 'dist', 'fonts.css')
-
-// const regexCSS = /\/\*\s+(?<name>[\w-]+)\s+\*\/[\n\r]+@font-face\s*\{(?<body>[^}]*)\}/igs;
-// const regex = /\/\*\s+(?<name>[\w-]+)\s+\*\/[\n\r]+@font-face\s*\{(?<body>[^}]*)\}/isg;
-const regex = /@font-face\s*\{(?<body>[^}]*)\}/isg;
-const regexFont = /font-family:\s*(?<family>[^;]*).*font-style:\s*(?<style>[^;]*).*font-weight:\s*(?<weight>[^;]*).*font-display:\s*(?<display>[^;]*).*src:\s*url\((?<src>[^);]*).*unicode-range:\s*(?<unicode>[^;]*)/isg;
-
-function clearDir(directory) {
-  fs.readdir(directory, (err, files) => {
-    if (err) throw err;
-
-    for (const file of files) {
-      fs.unlink(path.join(directory, file), err => {
-        if (err) throw err;
-      });
-    }
-  });
+if (result.error) {
+  throw result.error
 }
 
-function clearFontCssFile(filename) {
-  fs.unlink(filename, err => {
-    if (err) throw err;
-  });
-}
+const URL_TO_PARSE = result.parsed.URL
+const DEFAULT_PATH = result.parsed.DEFAULT_PATH ?? '../'
 
-async function download(url, dest) {
-  const file = fs.createWriteStream(dest);
+if  (URL_TO_PARSE) {
+  const fontsDir = path.resolve(__dirname, '../', 'dist', 'fonts')
+  const fontsCssFile = path.resolve(__dirname, '../', 'dist', 'fonts.css')
 
-  return new Promise((resolve, reject) => {
-    request({
-      uri: url,
-      gzip: true,
-    })
-      .pipe(file)
-      .on('finish', async () => {
-        resolve();
+  clearDir(fontsDir)
+  fs.unlink(fontsCssFile, () => {
+    
+  })
+
+  getBodyFromUrl(URL_TO_PARSE)
+    .then(res => res.data)
+    .then(res => {
+      modifyAST(res, {dest: DEFAULT_PATH}).then(r => {
+        createCss(fontsCssFile, r.css)
+        r.files.forEach(el => download(el.src, path.resolve(fontsDir, `${el.filename}.woff2`)))
       })
-      .on('error', (error) => {
-        reject(error);
-      });
-  })
-    .catch((error) => {
-      console.log(`Something happened: ${error}`);
-    });
+    })
+    .catch(e => {
+      console.log('Error to get data from URL: ', e)
+    })
+
 }
-
-function getFileData(url) {
-  const regexpGetName = /\/(?<filename>[^\/]+)\.(?<ext>[\w]+)$/
-  const parsed = regexpGetName.exec(url)
-  return {
-    name: parsed.groups.filename,
-    ext: parsed.groups.ext
-  }
-}
-
-const formatWoff = {
-  type: 'Function',
-  loc: null,
-  name: 'format',
-  children: [{type: 'String', loc: null, value: "'woff'"}]
-}
-
-function getNewUrl(urlObject, url) {
-  urlObject.value.value = url
-  return urlObject
-}
-
-const arrayToDownLoad = []
-
-async function parseCss(css) {
-  const ast = csstree.parse(css, {
-    parseAtrulePrelude: false,
-    parseRulePrelude: false
-  });
-
-  const astPlained = csstree.toPlainObject(ast)
-
-  await csstree.walk(astPlained, {
-    visit: 'Declaration',
-    enter(node) {
-
-      if (node.property === 'src') {
-
-        const urlObject = node.value.children.find(el => el.type === 'Url') ?? null
-        // const formatObject = {...node.value.children.find(el => el.type === 'Function')}
-
-        // console.log(formatObject)
-
-        // console.log(urlObject)
-
-        const fontUrl = urlObject.value?.value ?? null
-
-        if (urlObject) {
-          const {name, ext} = getFileData(urlObject.value?.value)
-
-          const destPath = path.resolve(fontsDir, `${name}.${ext}`)
-
-          arrayToDownLoad.push({ fontUrl, destPath })
-
-          urlObject.value.value = '../assets/fonts/Roboto/' + `${name}.${ext}`
-
-          node.value.children = [
-            ...node.value.children,
-            {type: 'Operator', loc: null, value: ','},
-            getNewUrl({...urlObject}, '../assets/fonts/Roboto/' + `${name}.${ext}`),
-            {type: 'WhiteSpace', loc: null, value: ' '},
-            formatWoff
-          ]
-
-        }
-
-      }
-    }
-  })
-
-  return await csstree.generate(ast)
-}
-
-clearDir(fontsDir)
-clearFontCssFile(fontsCssFile)
-
-request(
-  {
-    url: URL_PARSE,
-    headers: {'User-Agent': userAgentWoff2}
-  },
-  async function (error, response, body) {
-    if (!error && response.statusCode === 200) {
-
-      const cssResult = await parseCss(body)
-
-      arrayToDownLoad.forEach(download)
-
-      // fs.writeFileSync(path.resolve(__dirname, '../', 'dist', 'fonts.css'), cssResult);
-
-      fs.writeFile(fontsCssFile, cssResult, {flag: 'wx'}, function (err) {
-        if (err) {
-          console.log(err)
-        }
-        console.log("It's saved!");
-      });
-
-    } else {
-      console.log('Error request')
-    }
-  });
-
-// fs.readFile(URL_PARSE, 'utf8', (err, data) => {
-//   if (err) {
-//     console.error(err)
-//     return
-//   }
-//   parseCssFromString(data)
-// })
