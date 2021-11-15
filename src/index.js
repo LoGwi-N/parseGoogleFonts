@@ -19,7 +19,7 @@ if  (URL_TO_PARSE) {
 
   clearDir(fontsDir)
   fs.unlink(fontsCssFile, () => {
-    
+
   })
 
   getBodyFromUrl(URL_TO_PARSE)
